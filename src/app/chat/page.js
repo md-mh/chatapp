@@ -4,11 +4,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, MessageCircle, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  LogOut,
+  MessageCircle,
+  Plus,
+  Sparkles,
+  Users,
+} from "lucide-react";
 import Avatar from "@/components/Avatar";
 import Composer from "@/components/Composer";
 import ConversationList from "@/components/ConversationList";
+import GroupPanel from "@/components/GroupPanel";
 import MessageThread from "@/components/MessageThread";
+import NewConversationDialog from "@/components/NewConversationDialog";
 import { chatApi } from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { signOut, useHydrated, useSession } from "@/lib/session";
@@ -33,7 +42,10 @@ export default function ChatPage() {
   const socketStatus = useSocketStatus();
 
   const [activeId, setActiveId] = useState(null);
+  const [dialog, setDialog] = useState(null);
   const [filter, setFilter] = useState("");
+  const [listOpen, setListOpen] = useState(true);
+  const [unreadById, setUnreadById] = useState({});
 
   const isLive = Boolean(session.token);
 
@@ -64,6 +76,13 @@ export default function ChatPage() {
   const me = meQuery.data ?? session.user;
   const currentUserId = me?._id ?? null;
 
+  // Read inside the socket callbacks without giving them a new identity on
+  // every selection, which would tear the listeners down and rebuild them.
+  const activeIdRef = useRef(activeId);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
   const handleIncomingMessage = useCallback(
     (raw) => {
       const incoming = normalizeMessage(raw);
@@ -72,11 +91,16 @@ export default function ChatPage() {
         queryKeys.messages(incoming.conversationId),
         (data) => appendToPages(data, raw),
       );
-      // The list endpoint owns lastMessage, so a live message has to be folded
-      // in by hand to keep the preview and the ordering honest.
       queryClient.setQueryData(queryKeys.conversations, (data) => ({
         data: applyIncomingMessage(data, incoming),
       }));
+      // A message for a thread you are not looking at is worth a badge.
+      if (incoming.conversationId !== activeIdRef.current)
+        setUnreadById((current) => ({
+          ...current,
+          [incoming.conversationId]:
+            (current[incoming.conversationId] ?? 0) + 1,
+        }));
     },
     [queryClient],
   );
@@ -112,9 +136,12 @@ export default function ChatPage() {
   const chats = useMemo(
     () =>
       conversations
-        .map((conversation) => toChatItem(conversation, currentUserId))
+        .map((conversation) => ({
+          ...toChatItem(conversation, currentUserId),
+          unread: unreadById[conversation._id] ?? 0,
+        }))
         .filter((chat) => chat.id),
-    [conversations, currentUserId],
+    [conversations, currentUserId, unreadById],
   );
 
   const term = filter.trim().toLowerCase();
@@ -130,8 +157,6 @@ export default function ChatPage() {
     conversations.find((conversation) => conversation._id === activeId) ?? null;
   const activeChat = chats.find((chat) => chat.id === activeId) ?? null;
 
-  // A group bubble is labelled with its sender, and the socket payload carries
-  // only an id, so the names come from the conversation itself.
   const namesById = useMemo(() => {
     const map = {};
     for (const member of participantsOf(activeConversation))
@@ -140,6 +165,17 @@ export default function ChatPage() {
   }, [activeConversation]);
 
   const { send, retry, discard } = useSendMessage(activeId, currentUserId);
+
+  const openConversation = (id) => {
+    setActiveId(id);
+    setListOpen(false);
+    setUnreadById((current) => {
+      if (!current[id]) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  };
 
   const handleSignOut = () => {
     closeSocket();
@@ -162,10 +198,17 @@ export default function ChatPage() {
       </main>
     );
 
+  const emptyLabel = term
+    ? "Nothing matches that filter."
+    : "No conversations yet. Start one and it will appear here.";
+
   return (
     <div className="h-screen bg-[#f4f1ea] text-[#193c36] sm:p-5">
       <div className="mx-auto flex h-full max-w-[1440px] overflow-hidden border-[#193c36]/10 bg-white sm:rounded-[26px] sm:border sm:shadow-xl sm:shadow-[#193c36]/5">
-        <aside className="hidden w-[290px] shrink-0 flex-col border-r border-[#193c36]/10 bg-[#fbfaf6] md:flex">
+        {/* One pane at a time on a phone, both side by side from md up. */}
+        <aside
+          className={`${listOpen ? "flex" : "hidden"} w-full shrink-0 flex-col border-r border-[#193c36]/10 bg-[#fbfaf6] md:flex md:w-[290px]`}
+        >
           <div className="flex shrink-0 items-center justify-between border-b border-[#193c36]/10 p-5">
             <Link href="/" className="flex items-center gap-2">
               <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ef806f]">
@@ -173,6 +216,13 @@ export default function ChatPage() {
               </span>
               <span className="display font-semibold">chaton</span>
             </Link>
+            <button
+              onClick={() => setDialog("new")}
+              className="rounded-lg p-2 hover:bg-[#e9e8df]"
+              aria-label="New conversation"
+            >
+              <Plus size={18} />
+            </button>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -215,15 +265,11 @@ export default function ChatPage() {
             <ConversationList
               items={visibleChats}
               activeId={activeId}
-              onSelect={setActiveId}
+              onSelect={openConversation}
               isLoading={conversationsQuery.isPending}
               error={conversationsQuery.error}
               onRetry={conversationsQuery.refetch}
-              emptyLabel={
-                term
-                  ? "Nothing matches that filter."
-                  : "No conversations yet. Start one and it will appear here."
-              }
+              emptyLabel={emptyLabel}
             />
           </div>
 
@@ -237,19 +283,37 @@ export default function ChatPage() {
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-1 flex-col">
+        <section
+          className={`${listOpen ? "hidden" : "flex"} min-w-0 flex-1 flex-col md:flex`}
+        >
           {activeChat ? (
             <>
-              <header className="flex shrink-0 items-center gap-3 border-b border-[#193c36]/10 px-4 py-4 sm:px-8">
-                <Avatar chat={activeChat} small />
-                <div className="min-w-0">
-                  <h1 className="display truncate text-base font-semibold">
-                    {activeChat.name}
-                  </h1>
-                  <p className="truncate text-xs text-[#193c36]/50">
-                    {activeChat.detail}
-                  </p>
+              <header className="flex shrink-0 items-center justify-between border-b border-[#193c36]/10 px-4 py-4 sm:px-8">
+                <div className="flex min-w-0 items-center gap-3">
+                  <button
+                    onClick={() => setListOpen(true)}
+                    className="-ml-1 rounded-lg p-1.5 hover:bg-[#f0efe9] md:hidden"
+                    aria-label="Back to conversations"
+                  >
+                    <ArrowLeft size={18} />
+                  </button>
+                  <Avatar chat={activeChat} small />
+                  <div className="min-w-0">
+                    <h1 className="display truncate text-base font-semibold">
+                      {activeChat.name}
+                    </h1>
+                    <p className="truncate text-xs text-[#193c36]/50">
+                      {activeChat.detail}
+                    </p>
+                  </div>
                 </div>
+                <button
+                  onClick={() => setDialog("details")}
+                  className="rounded-lg p-2.5 hover:bg-[#f0efe9]"
+                  aria-label="Conversation details"
+                >
+                  <Users size={18} />
+                </button>
               </header>
 
               <MessageThread
@@ -269,16 +333,45 @@ export default function ChatPage() {
                   size={26}
                   className="mx-auto mb-3 text-[#193c36]/25"
                 />
-                <p className="text-sm leading-relaxed text-[#193c36]/50">
+                <p className="mb-4 text-sm leading-relaxed text-[#193c36]/50">
                   {conversationsQuery.isPending
                     ? "Loading your conversations..."
-                    : "Pick a conversation to open it here."}
+                    : chats.length
+                      ? "Pick a conversation to open it here."
+                      : "Nothing here yet. Start a conversation and it will open right here."}
                 </p>
+                {!conversationsQuery.isPending && !chats.length && (
+                  <button
+                    onClick={() => setDialog("new")}
+                    className="rounded-full bg-[#193c36] px-5 py-2.5 text-sm font-semibold text-[#f4f1ea] transition hover:bg-[#28544c]"
+                  >
+                    New conversation
+                  </button>
+                )}
               </div>
             </div>
           )}
         </section>
       </div>
+
+      {dialog === "new" && (
+        <NewConversationDialog
+          currentUserId={currentUserId}
+          onClose={() => setDialog(null)}
+          onCreated={openConversation}
+        />
+      )}
+      {dialog === "details" && activeConversation && (
+        <GroupPanel
+          conversation={activeConversation}
+          currentUserId={currentUserId}
+          onClose={() => setDialog(null)}
+          onLeft={() => {
+            setActiveId(null);
+            setListOpen(true);
+          }}
+        />
+      )}
     </div>
   );
 }
