@@ -6,15 +6,21 @@ import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, MessageCircle, Sparkles } from "lucide-react";
 import Avatar from "@/components/Avatar";
+import Composer from "@/components/Composer";
 import ConversationList from "@/components/ConversationList";
+import MessageThread from "@/components/MessageThread";
 import { chatApi } from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { signOut, useHydrated, useSession } from "@/lib/session";
 import { closeSocket, useChatSocket, useSocketStatus } from "@/lib/socket";
+import { appendToPages, normalizeMessage } from "@/lib/messages";
+import { useSendMessage } from "@/lib/useSendMessage";
 import {
   applyConversationUpdate,
   applyIncomingMessage,
   initialsOf,
+  isGroup,
+  participantsOf,
   sortConversations,
   toChatItem,
 } from "@/lib/conversations";
@@ -56,21 +62,20 @@ export default function ChatPage() {
   });
 
   const me = meQuery.data ?? session.user;
+  const currentUserId = me?._id ?? null;
 
-  // The list endpoint owns lastMessage, so a live message has to be folded in
-  // by hand to keep the preview and the ordering honest.
   const handleIncomingMessage = useCallback(
     (raw) => {
-      const conversationId = raw?.conversation ?? raw?.conversationId;
-      if (!conversationId) return;
-      const sender = raw?.sender;
+      const incoming = normalizeMessage(raw);
+      if (!incoming?.conversationId) return;
+      queryClient.setQueryData(
+        queryKeys.messages(incoming.conversationId),
+        (data) => appendToPages(data, raw),
+      );
+      // The list endpoint owns lastMessage, so a live message has to be folded
+      // in by hand to keep the preview and the ordering honest.
       queryClient.setQueryData(queryKeys.conversations, (data) => ({
-        data: applyIncomingMessage(data, {
-          conversationId,
-          text: raw?.text ?? "",
-          senderId: typeof sender === "object" ? sender?._id : sender,
-          createdAt: new Date(raw?.createdAt ?? Date.now()).getTime(),
-        }),
+        data: applyIncomingMessage(data, incoming),
       }));
     },
     [queryClient],
@@ -107,9 +112,9 @@ export default function ChatPage() {
   const chats = useMemo(
     () =>
       conversations
-        .map((conversation) => toChatItem(conversation, me?._id ?? null))
+        .map((conversation) => toChatItem(conversation, currentUserId))
         .filter((chat) => chat.id),
-    [conversations, me],
+    [conversations, currentUserId],
   );
 
   const term = filter.trim().toLowerCase();
@@ -121,7 +126,20 @@ export default function ChatPage() {
       )
     : chats;
 
+  const activeConversation =
+    conversations.find((conversation) => conversation._id === activeId) ?? null;
   const activeChat = chats.find((chat) => chat.id === activeId) ?? null;
+
+  // A group bubble is labelled with its sender, and the socket payload carries
+  // only an id, so the names come from the conversation itself.
+  const namesById = useMemo(() => {
+    const map = {};
+    for (const member of participantsOf(activeConversation))
+      if (member?._id) map[member._id] = member.name;
+    return map;
+  }, [activeConversation]);
+
+  const { send, retry, discard } = useSendMessage(activeId, currentUserId);
 
   const handleSignOut = () => {
     closeSocket();
@@ -221,17 +239,29 @@ export default function ChatPage() {
 
         <section className="flex min-w-0 flex-1 flex-col">
           {activeChat ? (
-            <header className="flex shrink-0 items-center gap-3 border-b border-[#193c36]/10 px-4 py-4 sm:px-8">
-              <Avatar chat={activeChat} small />
-              <div className="min-w-0">
-                <h1 className="display truncate text-base font-semibold">
-                  {activeChat.name}
-                </h1>
-                <p className="truncate text-xs text-[#193c36]/50">
-                  {activeChat.detail}
-                </p>
-              </div>
-            </header>
+            <>
+              <header className="flex shrink-0 items-center gap-3 border-b border-[#193c36]/10 px-4 py-4 sm:px-8">
+                <Avatar chat={activeChat} small />
+                <div className="min-w-0">
+                  <h1 className="display truncate text-base font-semibold">
+                    {activeChat.name}
+                  </h1>
+                  <p className="truncate text-xs text-[#193c36]/50">
+                    {activeChat.detail}
+                  </p>
+                </div>
+              </header>
+
+              <MessageThread
+                conversationId={activeChat.id}
+                currentUserId={currentUserId}
+                isGroup={isGroup(activeConversation)}
+                namesById={namesById}
+                onRetry={retry}
+                onDiscard={discard}
+              />
+              <Composer onSend={send} />
+            </>
           ) : (
             <div className="flex flex-1 items-center justify-center px-5 py-7 text-center">
               <div className="max-w-sm">
