@@ -204,10 +204,10 @@ export default function ChatPage() {
 
   return (
     <div className="h-screen bg-[#f4f1ea] text-[#193c36] sm:p-5">
-      <div className="mx-auto flex h-full max-w-[1440px] overflow-hidden border-[#193c36]/10 bg-white sm:rounded-[26px] sm:border sm:shadow-xl sm:shadow-[#193c36]/5">
+      <div className="mx-auto flex h-full max-w-360 overflow-hidden border-[#193c36]/10 bg-white sm:rounded-[26px] sm:border sm:shadow-xl sm:shadow-[#193c36]/5">
         {/* One pane at a time on a phone, both side by side from md up. */}
         <aside
-          className={`${listOpen ? "flex" : "hidden"} w-full shrink-0 flex-col border-r border-[#193c36]/10 bg-[#fbfaf6] md:flex md:w-[290px]`}
+          className={`${listOpen ? "flex" : "hidden"} w-full shrink-0 flex-col border-r border-[#193c36]/10 bg-[#fbfaf6] md:flex md:w-72.5`}
         >
           <div className="flex shrink-0 items-center justify-between border-b border-[#193c36]/10 p-5">
             <Link href="/" className="flex items-center gap-2">
