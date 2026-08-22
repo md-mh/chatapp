@@ -43,3 +43,6 @@ next-env.d.ts
 # local agent config
 CLAUDE.md
 AGENTS.md
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
