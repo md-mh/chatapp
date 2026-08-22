@@ -235,7 +235,7 @@ export default function LandingPage() {
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#ef806f] text-[#193c36]">
               <Sparkles size={12} />
             </span>
-            Chaton — a frontend assignment build
+            Chaton — Online Chat App
           </span>
           <span className="flex flex-wrap gap-5">
             <Link href="/login" className="transition hover:text-[#193c36]">
@@ -244,14 +244,6 @@ export default function LandingPage() {
             <Link href="/chat" className="transition hover:text-[#193c36]">
               Workspace
             </Link>
-            <a
-              href="https://frontend-task-chatapp.onrender.com/docs/"
-              target="_blank"
-              rel="noreferrer"
-              className="transition hover:text-[#193c36]"
-            >
-              API reference
-            </a>
           </span>
         </div>
       </footer>
